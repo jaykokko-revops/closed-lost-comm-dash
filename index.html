@@ -366,13 +366,14 @@ table.dt tr:hover td{background:rgba(141,255,157,.02);}
     <!-- 2H TRACKER -->
     <div id="d-2h" class="tab-panel">
       <div class="ib b" style="margin-bottom:20px;">
-        <div class="ib-title" style="color:var(--blue);">Live data — refreshes automatically from Google Sheets</div>
-        <div class="ib-body">Connected to your Salesforce → Google Sheets pipeline. Data refreshes daily. Click "Refresh Now" to pull the latest. Filters: Close Date ≥ 7/1/2026 · AE1–4 only · compared against 1H baseline (~21 opps/mo).</div>
+        <div class="ib-title" style="color:var(--blue);">Upload your latest Salesforce CSV to track 2H Closed Lost velocity</div>
+        <div class="ib-body">Auto-identifies Close Date ≥ 7/1/2026, filters to AE1–4, and compares against 1H baselines (~21 opps/mo). Upload at any cadence.</div>
       </div>
-      <div id="h2-status-bar" style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:12px 16px;background:var(--card2);border:1px solid var(--border);border-radius:8px;">
-        <div id="h2-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;"></div>
-        <div id="h2-status-text" style="font-size:12px;color:var(--muted);flex:1;">Loading latest data…</div>
-        <button class="action-btn" onclick="fetch2HData()" style="font-size:11px;">↻ Refresh Now</button>
+      <div id="h2-upload-zone" class="upload-zone mb20" onclick="document.getElementById('h2upload').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleDrop(event)">
+        <div class="upload-zone-icon">📁</div>
+        <div class="upload-zone-title">Drop your Salesforce CSV export here</div>
+        <div class="upload-zone-sub">or click to browse</div>
+        <input type="file" id="h2upload" accept=".csv" onchange="handle2HUpload(this.files[0])" style="display:none;">
       </div>
       <div id="h2-results" style="display:none;">
         <div class="sec" id="h2-heading">2H vs 1H Comparison</div>
@@ -545,10 +546,6 @@ function selectRole(role,rep){
 }
 function switchRole(){ document.getElementById('app').style.display='none'; document.getElementById('gate').style.display='flex'; document.getElementById('repPickerWrap').style.display='none'; document.getElementById('repConfirm').style.display='none'; }
 function switchTab(mode,tabId,el){
-  if(tabId==='d-2h' && document.getElementById('h2-results').style.display==='none'){
-    // Auto-fetch on first open
-    setTimeout(fetch2HData, 100);
-  }
   const navId=mode==='d'?'directorNav':'aeNav';
   document.querySelectorAll('#'+navId+' .nav-tab').forEach(t=>t.classList.remove('active')); if(el) el.classList.add('active');
   const prefix=mode==='d'?'d-':'ae-';
@@ -773,34 +770,16 @@ function exportAECSV(){
 }
 function download(fn,txt){ const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(txt); a.download=fn; a.click(); }
 
-// ---- 2H LIVE FETCH ----
-const SHEETS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTPsrkHkLJ1mgogLRlRGonYI6jh_f7WxQhVVvmyAg9NkQZCZpTKNi7ROQw3qPNGFxPuOIFT47KG0Bdv/pub?gid=161140354&single=true&output=csv";
+// ---- 2H UPLOAD ----
+function handleDrop(e){ e.preventDefault(); document.getElementById('h2-upload-zone').classList.remove('drag'); const f=e.dataTransfer.files[0]; if(f) handle2HUpload(f); }
+function handle2HUpload(file){ if(!file) return; const r=new FileReader(); r.onload=e=>parse2HCSV(e.target.result); r.readAsText(file,'latin1'); }
 function parseCSVLine(line){ const res=[]; let cur='',inQ=false; for(let i=0;i<line.length;i++){ if(line[i]==='"') inQ=!inQ; else if(line[i]===','&&!inQ){res.push(cur);cur='';}else cur+=line[i]; } res.push(cur); return res; }
-function parseCSVText(text){
+function parse2HCSV(text){
   const lines=text.split('\n'); const hdrs=parseCSVLine(lines[0]); const rows=[];
   for(let i=1;i<lines.length;i++){ if(!lines[i].trim()) continue; const vals=parseCSVLine(lines[i]); if(vals.length<5) continue; const row={}; hdrs.forEach((h,j)=>row[h.trim().replace(/"/g,'')]=(vals[j]||'').trim().replace(/^"|"$/g,'')); rows.push(row); }
-  return rows;
-}
-async function fetch2HData(){
-  const dot=document.getElementById('h2-status-dot');
-  const txt=document.getElementById('h2-status-text');
-  dot.style.background='var(--amber)'; txt.textContent='Fetching latest data from Google Sheets…';
-  try {
-    const resp = await fetch(SHEETS_CSV_URL);
-    if(!resp.ok) throw new Error('HTTP '+resp.status);
-    const text = await resp.text();
-    const rows = parseCSVText(text);
-    const h2=new Date('2026-07-01'), pd=s=>{if(!s) return null;const d=new Date(s);return isNaN(d)?null:d;};
-    const cl=rows.filter(r=>r['Stage']==='Closed Lost'&&{'AE1':1,'AE2':1,'AE3':1,'AE4':1}[(r['AE Type']||'').trim()]&&pd(r['Close Date'])&&pd(r['Close Date'])>=h2);
-    dot.style.background='var(--spring)';
-    const now=new Date().toLocaleString();
-    txt.textContent=`Last refreshed: ${now} · ${cl.length} 2H Closed Lost opps found (AE1–4, Close Date ≥ 7/1/2026)`;
-    render2HResults(cl);
-  } catch(err) {
-    dot.style.background='var(--red)';
-    txt.textContent='Could not reach Google Sheets. Check that the sheet is published (File → Share → Publish to web). Error: '+err.message;
-    console.error('Sheets fetch error:', err);
-  }
+  const h2=new Date('2026-07-01'), pd=s=>{if(!s) return null;const d=new Date(s);return isNaN(d)?null:d;};
+  const cl=rows.filter(r=>r['Stage']==='Closed Lost'&&{'AE1':1,'AE2':1,'AE3':1,'AE4':1}[r['AE Type']]&&pd(r['Close Date'])&&pd(r['Close Date'])>=h2);
+  render2HResults(cl);
 }
 function render2HResults(cl){
   document.getElementById('h2-results').style.display='block'; document.getElementById('h2-upload-zone').style.display='none';
